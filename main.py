@@ -9,7 +9,6 @@ from dotenv import load_dotenv
 load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
 
-# ロールID設定
 ROLE_OPTIONS = {
     "オムニス権限": 1459208662055911538,
     "管理者ロール": 1459388566760325318,
@@ -19,7 +18,7 @@ ROLE_OPTIONS = {
     "アルバイトロール": 1455243576337502228
 }
 
-WORK_ROLE_ID = 1459209336076374068 # 出勤中ロール
+WORK_ROLE_ID = 1459209336076374068 
 ADMIN_PANEL_CHANNEL_ID = 1459371812310745171
 GENERAL_PANEL_CHANNEL_ID = 1458801073899966585
 ALERT_CHANNEL_ID = 1459388566760325318 
@@ -63,6 +62,7 @@ class RoleActionModal(discord.ui.Modal):
         self.role_id, self.mode_label = role_id, mode_label
         self.uid = discord.ui.TextInput(label="対象のユーザーID")
         self.add_item(self.uid)
+
     async def on_submit(self, interaction):
         member = interaction.guild.get_member(int(self.uid.value))
         if not member: return await interaction.response.send_message("❌ ユーザーが見つかりません。", ephemeral=True)
@@ -76,28 +76,36 @@ class ItemAddModal(discord.ui.Modal):
     def __init__(self, mode):
         super().__init__(title="商品登録" if mode == "prod" else "素材登録")
         self.mode = mode
-        self.name = discord.ui.TextInput(label="名前"); self.add_item(self.name)
-        self.threshold = discord.ui.TextInput(label="アラート下限数", default="5"); self.add_item(self.threshold)
+        self.name_input = discord.ui.TextInput(label="名前")
+        self.threshold_input = discord.ui.TextInput(label="アラート下限数", default="5")
+        self.add_item(self.name_input)
+        self.add_item(self.threshold_input)
         if mode == "prod":
-            self.price = discord.ui.TextInput(label="販売価格", default="0"); self.add_item(self.price)
+            self.price_input = discord.ui.TextInput(label="販売価格", default="0")
+            self.add_item(self.price_input)
+
     async def on_submit(self, interaction):
         async with aiosqlite.connect(DB_PATH) as db:
             if self.mode == "prod":
-                await db.execute("INSERT OR REPLACE INTO products (name, price, threshold, current) VALUES (?,?,?,COALESCE((SELECT current FROM products WHERE name=?),0))", (self.name.value, int(self.price.value), int(self.threshold.value), self.name.value))
+                await db.execute("INSERT OR REPLACE INTO products (name, price, threshold, current) VALUES (?,?,?,COALESCE((SELECT current FROM products WHERE name=?),0))", 
+                                (self.name_input.value, int(self.price_input.value), int(self.threshold_input.value), self.name_input.value))
             else:
-                await db.execute("INSERT OR REPLACE INTO materials (name, threshold, current) VALUES (?,?,COALESCE((SELECT current FROM materials WHERE name=?),0))", (self.name.value, int(self.threshold.value), self.name.value))
+                await db.execute("INSERT OR REPLACE INTO materials (name, threshold, current) VALUES (?,?,COALESCE((SELECT current FROM materials WHERE name=?),0))", 
+                                (self.name_input.value, int(self.threshold_input.value), self.name_input.value))
             await db.commit()
-        await add_audit(interaction.user.id, f"ADD_{self.mode.upper()}", self.name.value)
-        await interaction.response.send_message(f"✅ {self.name.value} を保存しました。", ephemeral=True)
+        await add_audit(interaction.user.id, f"ADD_{self.mode.upper()}", self.name_input.value)
+        await interaction.response.send_message(f"✅ {self.name_input.value} を保存しました。", ephemeral=True)
 
 class StockAdjustModal(discord.ui.Modal):
     def __init__(self, name, table, mode):
         super().__init__(title=f"{name} の{'補充' if mode == 'add' else '引き出し'}")
         self.name, self.table, self.mode = name, table, mode
-        self.qty = discord.ui.TextInput(label="個数"); self.add_item(self.qty)
+        self.qty_input = discord.ui.TextInput(label="個数")
+        self.add_item(self.qty_input)
+
     async def on_submit(self, interaction):
         try:
-            val = int(self.qty.value) * (1 if self.mode == 'add' else -1)
+            val = int(self.qty_input.value) * (1 if self.mode == 'add' else -1)
             async with aiosqlite.connect(DB_PATH) as db:
                 await db.execute(f"UPDATE {self.table} SET current = current + ? WHERE name = ?", (val, self.name))
                 await db.commit()
@@ -145,8 +153,9 @@ class AdminPanel(discord.ui.View):
     @discord.ui.button(label="📜 レシピ・登録管理", style=discord.ButtonStyle.primary, custom_id="adm_recipe")
     async def recipe_mgmt(self, interaction, button):
         v = discord.ui.View()
-        v.add_item(discord.ui.Button(label="➕ 商品追加", style=discord.ButtonStyle.success)).callback = lambda i: i.response.send_modal(ItemAddModal("prod"))
-        v.add_item(discord.ui.Button(label="➕ 素材追加", style=discord.ButtonStyle.success)).callback = lambda i: i.response.send_modal(ItemAddModal("mat"))
+        b_prod = discord.ui.Button(label="➕ 商品追加", style=discord.ButtonStyle.success); b_prod.callback = lambda i: i.response.send_modal(ItemAddModal("prod"))
+        b_mat = discord.ui.Button(label="➕ 素材追加", style=discord.ButtonStyle.success); b_mat.callback = lambda i: i.response.send_modal(ItemAddModal("mat"))
+        v.add_item(b_prod).add_item(b_mat)
         async with aiosqlite.connect(DB_PATH) as db:
             prods = await (await db.execute("SELECT name FROM products")).fetchall()
             mats = await (await db.execute("SELECT name FROM materials")).fetchall()
@@ -172,7 +181,9 @@ class AdminPanel(discord.ui.View):
                     class QModal(discord.ui.Modal, title="必要数"):
                         def __init__(self, m_list):
                             super().__init__(); self.m_list = m_list; self.ins = []
-                            for n in m_list[:5]: inp = discord.ui.TextInput(label=f"{n} の個数", default="1"); self.add_item(inp); self.ins.append((n, inp))
+                            for n in m_list[:5]:
+                                inp = discord.ui.TextInput(label=f"{n} の個数", default="1")
+                                self.add_item(inp); self.ins.append((n, inp))
                         async def on_submit(self, i3):
                             async with aiosqlite.connect(DB_PATH) as db:
                                 for n, inp in self.ins: await db.execute("INSERT OR REPLACE INTO recipes VALUES (?,?,?)", (p_name, n, int(inp.value)))
@@ -207,7 +218,11 @@ class AdminPanel(discord.ui.View):
         v = discord.ui.View(); b1 = discord.ui.Button(label="💰 時給設定", style=discord.ButtonStyle.gray)
         async def b1_cb(i):
             class BModal(discord.ui.Modal, title="時給設定"):
-                a = discord.ui.TextInput(label="金額"); async def on_submit(self, i2):
+                def __init__(self):
+                    super().__init__()
+                    self.a = discord.ui.TextInput(label="金額")
+                    self.add_item(self.a)
+                async def on_submit(self, i2):
                     async with aiosqlite.connect(DB_PATH) as db: await db.execute("INSERT OR REPLACE INTO config VALUES ('hourly_bonus', ?)", (self.a.value,)); await db.commit()
                     await i2.response.send_message("✅ 設定完了。", ephemeral=True)
             await i.response.send_modal(BModal())
@@ -269,15 +284,19 @@ class GeneralPanel(discord.ui.View):
         v = discord.ui.View(); s = discord.ui.Select(placeholder="制作したアイテムを選択")
         for p in prods: s.add_option(label=p[0], value=p[0])
         async def cb(i):
-            m = discord.ui.Modal(title="制作数入力"); q = discord.ui.TextInput(label="個数", default="1"); m.add_item(q)
-            async def scb(mi):
-                qty, pn = int(q.value), s.values[0]
-                async with aiosqlite.connect(DB_PATH) as db:
-                    recipe = await (await db.execute("SELECT material_name, quantity FROM recipes WHERE product_name=?", (pn,))).fetchall()
-                    for mn, mq in recipe: await db.execute("UPDATE materials SET current = current - ? WHERE name=?", (mq*qty, mn))
-                    await db.execute("UPDATE products SET current = current + ? WHERE name=?", (qty, pn)); await db.commit()
-                await mi.response.send_message(f"✅ {pn} を {qty} 個制作しました（素材を自動消費しました）", ephemeral=True)
-            m.on_submit = scb; await i.response.send_modal(m)
+            class QModal(discord.ui.Modal, title="制作数入力"):
+                def __init__(self):
+                    super().__init__()
+                    self.q = discord.ui.TextInput(label="個数", default="1")
+                    self.add_item(self.q)
+                async def on_submit(self, mi):
+                    qty, pn = int(self.q.value), s.values[0]
+                    async with aiosqlite.connect(DB_PATH) as db:
+                        recipe = await (await db.execute("SELECT material_name, quantity FROM recipes WHERE product_name=?", (pn,))).fetchall()
+                        for mn, mq in recipe: await db.execute("UPDATE materials SET current = current - ? WHERE name=?", (mq*qty, mn))
+                        await db.execute("UPDATE products SET current = current + ? WHERE name=?", (qty, pn)); await db.commit()
+                    await mi.response.send_message(f"✅ {pn} を {qty} 個制作しました", ephemeral=True)
+            await i.response.send_modal(QModal())
         s.callback = cb; v.add_item(s); await interaction.response.send_message("制作報告:", view=v, ephemeral=True)
 
     @discord.ui.button(label="💰 売上登録", style=discord.ButtonStyle.secondary, custom_id="gen_sale")
@@ -288,15 +307,20 @@ class GeneralPanel(discord.ui.View):
         v = discord.ui.View(); s = discord.ui.Select(placeholder="販売したアイテムを選択")
         for p in prods: s.add_option(label=f"{p[0]} ({p[1]}{CURRENCY})", value=f"{p[0]}:{p[1]}")
         async def cb(i):
-            pn, pr = s.values[0].split(":"); m = discord.ui.Modal(title="販売数入力"); q = discord.ui.TextInput(label="個数", default="1"); m.add_item(q)
-            async def scb(mi):
-                total = int(q.value) * int(pr)
-                async with aiosqlite.connect(DB_PATH) as db:
-                    await db.execute("UPDATE products SET current = current - ? WHERE name=?", (int(q.value), pn))
-                    await db.execute("INSERT INTO sales_ranking (user_id, total_amount) VALUES (?, ?) ON CONFLICT(user_id) DO UPDATE SET total_amount = total_amount + ?", (mi.user.id, total, total))
-                    await db.commit()
-                await mi.response.send_message(f"💰 {total}{CURRENCY} の売上を登録しました（在庫を減らしました）", ephemeral=True)
-            m.on_submit = scb; await i.response.send_modal(m)
+            pn, pr = s.values[0].split(":"); 
+            class SModal(discord.ui.Modal, title="販売数入力"):
+                def __init__(self):
+                    super().__init__()
+                    self.q = discord.ui.TextInput(label="個数", default="1")
+                    self.add_item(self.q)
+                async def on_submit(self, mi):
+                    total = int(self.q.value) * int(pr)
+                    async with aiosqlite.connect(DB_PATH) as db:
+                        await db.execute("UPDATE products SET current = current - ? WHERE name=?", (int(self.q.value), pn))
+                        await db.execute("INSERT INTO sales_ranking (user_id, total_amount) VALUES (?, ?) ON CONFLICT(user_id) DO UPDATE SET total_amount = total_amount + ?", (mi.user.id, total, total))
+                        await db.commit()
+                    await mi.response.send_message(f"💰 {total}{CURRENCY} の売上を登録しました", ephemeral=True)
+            await i.response.send_modal(SModal())
         s.callback = cb; v.add_item(s); await interaction.response.send_message("売上登録:", view=v, ephemeral=True)
 
 # ================= 6. 起動 =================
