@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 
 # ================= 1. 各種設定 =================
 load_dotenv()
-TOKEN = os.getenv("DISCORD_TOKEN")
+TOKEN = os.getenv("TOKEN")
 
 ADMIN_ROLE_ID = 1459388566760325318      
 OMNIS_ROLE_ID = 1459208662055911538     
