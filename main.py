@@ -241,7 +241,7 @@ class AdminPanel(discord.ui.View):
         sel.callback = m_cb; view.add_item(sel); await i.response.send_message("ロール管理:", view=view, ephemeral=True)
 
 @discord.ui.button(label="集計/データリセット", style=discord.ButtonStyle.gray, custom_id="v22_ad_stat")
-    async def stats(self, i, b):
+    async def stats(self, i: discord.Interaction, b: discord.ui.Button):
         async with aiosqlite.connect(DB_PATH) as db:
             rank = await (await db.execute("SELECT user_id, total_amount FROM sales_ranking ORDER BY total_amount DESC")).fetchall()
             work = await (await db.execute("SELECT user_id, SUM(duration) FROM work_logs GROUP BY user_id")).fetchall()
@@ -249,7 +249,7 @@ class AdminPanel(discord.ui.View):
         msg = "🏆 **売上ランキング**\n" + ("\n".join([f"<@{r[0]}>: {r[1]:,}円" for r in rank]) if rank else "データなし")
         msg += f"\n\n📊 **勤怠累計**\n" + ("\n".join([f"<@{w[0]}>: {w[1]//60}時間{w[1]%60}分" for w in work]) if work else "データなし")
         
-        # リセット専用のViewを呼び出す
+        # リセット専用のViewを呼び出すことで動作を確定させる
         await i.response.send_message(msg, view=DataResetView(), ephemeral=True)
 
 # ================= 4.6. リセット操作専用View =================
@@ -259,6 +259,7 @@ class DataResetView(discord.ui.View):
 
     @discord.ui.button(label="⚠️ 全体リセット", style=discord.ButtonStyle.danger)
     async def reset_all_btn(self, i: discord.Interaction, b: discord.ui.Button):
+        # 誤操作防止の確認などは入れず、即時実行します
         async with aiosqlite.connect(DB_PATH) as db:
             await db.execute("DELETE FROM sales_ranking")
             await db.execute("DELETE FROM work_logs")
@@ -269,12 +270,12 @@ class DataResetView(discord.ui.View):
     async def reset_ind_btn(self, i: discord.Interaction, b: discord.ui.Button):
         async def reset_ind_callback(idx, uid):
             try:
-                user_id = int(uid)
+                target_uid = int(uid)
                 async with aiosqlite.connect(DB_PATH) as db:
-                    await db.execute("DELETE FROM sales_ranking WHERE user_id=?", (user_id,))
-                    await db.execute("DELETE FROM work_logs WHERE user_id=?", (user_id,))
+                    await db.execute("DELETE FROM sales_ranking WHERE user_id=?", (target_uid,))
+                    await db.execute("DELETE FROM work_logs WHERE user_id=?", (target_uid,))
                     await db.commit()
-                await idx.response.send_message(f"✅ 指定ユーザー(<@{user_id}>)のデータをリセットしました。", ephemeral=True)
+                await idx.response.send_message(f"✅ 指定ユーザー(<@{target_uid}>)のデータをリセットしました。", ephemeral=True)
             except ValueError:
                 await idx.response.send_message("❌ 正しいユーザーID（数字）を入力してください。", ephemeral=True)
 
