@@ -240,7 +240,7 @@ class AdminPanel(discord.ui.View):
             await i2.response.send_modal(GenericModal("ID入力", "ユーザーID", act))
         sel.callback = m_cb; view.add_item(sel); await i.response.send_message("ロール管理:", view=view, ephemeral=True)
 
-    @discord.ui.button(label="集計/データリセット", style=discord.ButtonStyle.gray, custom_id="v16_ad_stat")
+@discord.ui.button(label="集計/データリセット", style=discord.ButtonStyle.gray, custom_id="v22_ad_stat")
     async def stats(self, i, b):
         async with aiosqlite.connect(DB_PATH) as db:
             rank = await (await db.execute("SELECT user_id, total_amount FROM sales_ranking ORDER BY total_amount DESC")).fetchall()
@@ -249,26 +249,36 @@ class AdminPanel(discord.ui.View):
         msg = "🏆 **売上ランキング**\n" + ("\n".join([f"<@{r[0]}>: {r[1]:,}円" for r in rank]) if rank else "データなし")
         msg += f"\n\n📊 **勤怠累計**\n" + ("\n".join([f"<@{w[0]}>: {w[1]//60}時間{w[1]%60}分" for w in work]) if work else "データなし")
         
-        view = discord.ui.View()
-        # 全体リセット機能の正常化
-        async def reset_all(idx):
-            async with aiosqlite.connect(DB_PATH) as db:
-                await db.execute("DELETE FROM sales_ranking")
-                await db.execute("DELETE FROM work_logs")
-                await db.commit() # 反映
-            await idx.response.send_message("✅ 全員の売上・勤怠データをリセットしました。", ephemeral=True)
-        
-        # 個人リセット機能の正常化
-        async def reset_ind(idx, uid):
-            async with aiosqlite.connect(DB_PATH) as db:
-                await db.execute("DELETE FROM sales_ranking WHERE user_id=?", (int(uid),))
-                await db.execute("DELETE FROM work_logs WHERE user_id=?", (int(uid),))
-                await db.commit() # 反映
-            await idx.response.send_message(f"✅ 指定ユーザー(<@{uid}>)のデータをリセットしました。", ephemeral=True)
+        # リセット専用のViewを呼び出す
+        await i.response.send_message(msg, view=DataResetView(), ephemeral=True)
 
-        view.add_item(discord.ui.Button(label="全体リセット", style=discord.ButtonStyle.danger)).callback = reset_all
-        view.add_item(discord.ui.Button(label="個人リセット", style=discord.ButtonStyle.secondary)).callback = lambda x: x.response.send_modal(GenericModal("リセット", "対象のユーザーID", reset_ind))
-        await i.response.send_message(msg, view=view, ephemeral=True)
+# ================= 4.6. リセット操作専用View =================
+class DataResetView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=180)
+
+    @discord.ui.button(label="⚠️ 全体リセット", style=discord.ButtonStyle.danger)
+    async def reset_all_btn(self, i: discord.Interaction, b: discord.ui.Button):
+        async with aiosqlite.connect(DB_PATH) as db:
+            await db.execute("DELETE FROM sales_ranking")
+            await db.execute("DELETE FROM work_logs")
+            await db.commit()
+        await i.response.send_message("✅ 全員の売上・勤怠データをリセットしました。", ephemeral=True)
+
+    @discord.ui.button(label="👤 個人リセット", style=discord.ButtonStyle.secondary)
+    async def reset_ind_btn(self, i: discord.Interaction, b: discord.ui.Button):
+        async def reset_ind_callback(idx, uid):
+            try:
+                user_id = int(uid)
+                async with aiosqlite.connect(DB_PATH) as db:
+                    await db.execute("DELETE FROM sales_ranking WHERE user_id=?", (user_id,))
+                    await db.execute("DELETE FROM work_logs WHERE user_id=?", (user_id,))
+                    await db.commit()
+                await idx.response.send_message(f"✅ 指定ユーザー(<@{user_id}>)のデータをリセットしました。", ephemeral=True)
+            except ValueError:
+                await idx.response.send_message("❌ 正しいユーザーID（数字）を入力してください。", ephemeral=True)
+
+        await i.response.send_modal(GenericModal("個人データリセット", "対象のユーザーIDを入力", reset_ind_callback))
 
     @discord.ui.button(label="履歴ログ", style=discord.ButtonStyle.gray, custom_id="v16_ad_log")
     async def logs(self, i, b):
