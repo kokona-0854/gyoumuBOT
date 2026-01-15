@@ -252,6 +252,13 @@ class AdminPanel(discord.ui.View):
         # リセット専用のViewを呼び出すことで動作を確定させる
         await i.response.send_message(msg, view=DataResetView(), ephemeral=True)
 
+    @discord.ui.button(label="履歴ログ", style=discord.ButtonStyle.gray, custom_id="v16_ad_log")
+    async def logs(self, i, b):
+        async with aiosqlite.connect(DB_PATH) as db:
+            rows = await (await db.execute("SELECT created_at, user_id, action, detail FROM audit_logs ORDER BY id DESC LIMIT 15")).fetchall()
+        txt = "📜 **履歴ログ**\n" + ("\n".join([f"`{r[0][5:16]}` <@{r[1]}> **{r[2]}**: {r[3]}" for r in rows]) if rows else "ログなし")
+        await i.response.send_message(txt, ephemeral=True)
+
 # ================= 4.6. リセット操作専用View =================
 class DataResetView(discord.ui.View):
     def __init__(self):
@@ -280,13 +287,6 @@ class DataResetView(discord.ui.View):
                 await idx.response.send_message("❌ 正しいユーザーID（数字）を入力してください。", ephemeral=True)
 
         await i.response.send_modal(GenericModal("個人データリセット", "対象のユーザーIDを入力", reset_ind_callback))
-
-    @discord.ui.button(label="履歴ログ", style=discord.ButtonStyle.gray, custom_id="v16_ad_log")
-    async def logs(self, i, b):
-        async with aiosqlite.connect(DB_PATH) as db:
-            rows = await (await db.execute("SELECT created_at, user_id, action, detail FROM audit_logs ORDER BY id DESC LIMIT 15")).fetchall()
-        txt = "📜 **履歴ログ**\n" + ("\n".join([f"`{r[0][5:16]}` <@{r[1]}> **{r[2]}**: {r[3]}" for r in rows]) if rows else "ログなし")
-        await i.response.send_message(txt, ephemeral=True)
 
 # ================= 6. 業務パネル (GeneralPanel) =================
 class GeneralPanel(discord.ui.View):
