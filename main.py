@@ -129,6 +129,39 @@ class ItemPanel(discord.ui.View):
 
         await i.response.send_message("⚙️ **マスタ管理メニュー**", view=view, ephemeral=True)
 
+    # 3. 素材補充・引き出し
+    @discord.ui.button(label="素材補充・引き出し", style=discord.ButtonStyle.secondary, custom_id="v19_it_m_adj")
+    async def mat_adj(self, i, b):
+        async with aiosqlite.connect(DB_PATH) as db:
+            mats = await (await db.execute("SELECT name, current FROM materials")).fetchall()
+        
+        if not mats: return await i.response.send_message("❌ 素材が登録されていません。", ephemeral=True)
+        
+        view = discord.ui.View(); sel = discord.ui.Select(placeholder="対象の素材を選択")
+        for r in mats[:25]: sel.add_option(label=f"{r[0]} (現在: {r[1]}個)", value=r[0])
+        
+        async def adj_cb(i2, val):
+            async with aiosqlite.connect(DB_PATH) as db:
+                await db.execute("UPDATE materials SET current = current + ? WHERE name=?", (int(val), sel.values[0]))
+                await db.commit()
+            await i2.response.send_message(f"✅ {sel.values[0]} を {val} 個調整しました。", ephemeral=True)
+            
+        sel.callback = lambda i2: i2.response.send_modal(GenericModal("在庫調整", "+で補充 / -で減少", adj_cb))
+        view.add_item(sel); await i.response.send_message("📦 **素材在庫の直接調整**", view=view, ephemeral=True)
+
+    # 4. 在庫表示
+    @discord.ui.button(label="在庫表示", style=discord.ButtonStyle.gray, custom_id="v19_it_stock")
+    async def stock_view(self, i, b):
+        async with aiosqlite.connect(DB_PATH) as db:
+            m = await (await db.execute("SELECT name, current FROM materials")).fetchall()
+            p = await (await db.execute("SELECT name, current FROM products")).fetchall()
+        
+        txt = "📦 **現在庫一覧**\n\n**【商品（制作済み）】**\n"
+        txt += ("\n".join([f"・{x[0]}: `{x[1]}`個 (単価:{x[2] if len(x)>2 else 0}円)" for x in p]) if p else "なし")
+        txt += "\n\n**【素材（原材料）】**\n"
+        txt += ("\n".join([f"・{x[0]}: `{x[1]}`個" for x in m]) if m else "なし")
+        await i.response.send_message(txt, ephemeral=True)
+
 # ================= 4.5. 商品個別操作用サブView =================
 class ProductControlView(discord.ui.View):
     def __init__(self, target_product: str):
@@ -185,39 +218,6 @@ class ProductControlView(discord.ui.View):
         
         sel_p.callback = p_sel_cb; view.add_item(sel_p)
         await i.response.send_message("📜 **レシピ設定（制作報告と連動）**", view=view, ephemeral=True)
-
-    # 3. 素材補充・引き出し
-    @discord.ui.button(label="素材補充・引き出し", style=discord.ButtonStyle.secondary, custom_id="v19_it_m_adj")
-    async def mat_adj(self, i, b):
-        async with aiosqlite.connect(DB_PATH) as db:
-            mats = await (await db.execute("SELECT name, current FROM materials")).fetchall()
-        
-        if not mats: return await i.response.send_message("❌ 素材が登録されていません。", ephemeral=True)
-        
-        view = discord.ui.View(); sel = discord.ui.Select(placeholder="対象の素材を選択")
-        for r in mats[:25]: sel.add_option(label=f"{r[0]} (現在: {r[1]}個)", value=r[0])
-        
-        async def adj_cb(i2, val):
-            async with aiosqlite.connect(DB_PATH) as db:
-                await db.execute("UPDATE materials SET current = current + ? WHERE name=?", (int(val), sel.values[0]))
-                await db.commit()
-            await i2.response.send_message(f"✅ {sel.values[0]} を {val} 個調整しました。", ephemeral=True)
-            
-        sel.callback = lambda i2: i2.response.send_modal(GenericModal("在庫調整", "+で補充 / -で減少", adj_cb))
-        view.add_item(sel); await i.response.send_message("📦 **素材在庫の直接調整**", view=view, ephemeral=True)
-
-    # 4. 在庫表示
-    @discord.ui.button(label="在庫表示", style=discord.ButtonStyle.gray, custom_id="v19_it_stock")
-    async def stock_view(self, i, b):
-        async with aiosqlite.connect(DB_PATH) as db:
-            m = await (await db.execute("SELECT name, current FROM materials")).fetchall()
-            p = await (await db.execute("SELECT name, current FROM products")).fetchall()
-        
-        txt = "📦 **現在庫一覧**\n\n**【商品（制作済み）】**\n"
-        txt += ("\n".join([f"・{x[0]}: `{x[1]}`個 (単価:{x[2] if len(x)>2 else 0}円)" for x in p]) if p else "なし")
-        txt += "\n\n**【素材（原材料）】**\n"
-        txt += ("\n".join([f"・{x[0]}: `{x[1]}`個" for x in m]) if m else "なし")
-        await i.response.send_message(txt, ephemeral=True)
 
 # ================= 5. 管理パネル (AdminPanel) 修正版 =================
 class AdminPanel(discord.ui.View):
