@@ -240,7 +240,7 @@ class AdminPanel(discord.ui.View):
             await i2.response.send_modal(GenericModal("ID入力", "ユーザーID", act))
         sel.callback = m_cb; view.add_item(sel); await i.response.send_message("ロール管理:", view=view, ephemeral=True)
 
-@discord.ui.button(label="集計/データリセット", style=discord.ButtonStyle.gray, custom_id="v22_ad_stat")
+    @discord.ui.button(label="集計/データリセット", style=discord.ButtonStyle.gray, custom_id="v22_ad_stat")
     async def stats(self, i: discord.Interaction, b: discord.ui.Button):
         async with aiosqlite.connect(DB_PATH) as db:
             rank = await (await db.execute("SELECT user_id, total_amount FROM sales_ranking ORDER BY total_amount DESC")).fetchall()
