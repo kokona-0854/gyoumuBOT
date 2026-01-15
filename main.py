@@ -7,7 +7,7 @@ import sys
 from dotenv import load_dotenv
 
 # ================= 1. 設定セクション =================
-load_dotenv()
+load_dotenv("/root/gyoumuBOT/.env")
 TOKEN = os.getenv("DISCORD_TOKEN")
 
 # ロールID
@@ -63,7 +63,7 @@ class GenericModal(discord.ui.Modal):
     async def on_submit(self, interaction: discord.Interaction):
         await self.callback_func(interaction, self.input.value)
 
-# ================= 4. 商品パネル (ItemPanel) =================
+# ================= 4. 商品パネル (ItemPanel) 修正版 =================
 class ItemPanel(discord.ui.View):
     def __init__(self): super().__init__(timeout=None)
     
@@ -72,110 +72,137 @@ class ItemPanel(discord.ui.View):
         if any(r.id == ADMIN_ROLE_ID for r in i.user.roles): return True
         await i.response.send_message("❌ 管理ロールが必要です。", ephemeral=True); return False
 
-    @discord.ui.button(label="商品・素材設定", style=discord.ButtonStyle.primary, custom_id="v1_it_reg")
+    @discord.ui.button(label="商品・素材設定｜レシピ登録", style=discord.ButtonStyle.primary, custom_id="v16_it_reg")
     async def reg(self, i, b):
+        async with aiosqlite.connect(DB_PATH) as db:
+            p_rows = await (await db.execute("SELECT name FROM products")).fetchall()
+            m_rows = await (await db.execute("SELECT name FROM materials")).fetchall()
+        
+        prods = [r[0] for r in p_rows]; mats = [r[0] for r in m_rows]
         view = discord.ui.View()
+
         async def add_p(idx, v):
             async with aiosqlite.connect(DB_PATH) as db: await db.execute("INSERT OR IGNORE INTO products (name) VALUES (?)", (v,)); await db.commit()
-            await idx.response.send_message(f"✅ 商品 {v} を追加しました。", ephemeral=True)
+            await idx.response.send_message(f"✅ 商品 {v} 登録", ephemeral=True)
         async def add_m(idx, v):
             async with aiosqlite.connect(DB_PATH) as db: await db.execute("INSERT OR IGNORE INTO materials (name) VALUES (?)", (v,)); await db.commit()
-            await idx.response.send_message(f"✅ 素材 {v} を追加しました。", ephemeral=True)
+            await idx.response.send_message(f"✅ 素材 {v} 登録", ephemeral=True)
         
-        view.add_item(discord.ui.Button(label="商品追加", style=discord.ButtonStyle.success)).callback = lambda x: x.response.send_modal(GenericModal("商品", "名前", add_p))
-        view.add_item(discord.ui.Button(label="素材追加", style=discord.ButtonStyle.success)).callback = lambda x: x.response.send_modal(GenericModal("素材", "名前", add_m))
-        
-        # レシピ設定用
-        async with aiosqlite.connect(DB_PATH) as db:
-            prods = [r[0] for r in await (await db.execute("SELECT name FROM products")).fetchall()]
-            mats = [r[0] for r in await (await db.execute("SELECT name FROM materials")).fetchall()]
+        view.add_item(discord.ui.Button(label="商品追加", style=discord.ButtonStyle.success, row=0)).callback = lambda x: x.response.send_modal(GenericModal("商品", "名前", add_p))
+        view.add_item(discord.ui.Button(label="素材追加", style=discord.ButtonStyle.success, row=0)).callback = lambda x: x.response.send_modal(GenericModal("素材", "名前", add_m))
 
-        if prods and mats:
-            sel_p = discord.ui.Select(placeholder="商品を選択して価格/レシピ設定")
-            for p in prods: sel_p.add_option(label=p, value=p)
-            async def p_cb(i2):
-                v3 = discord.ui.View()
-                async def set_prc(i3, val):
-                    async with aiosqlite.connect(DB_PATH) as db: await db.execute("UPDATE products SET price=? WHERE name=?", (int(val), sel_p.values[0])); await db.commit()
-                    await i3.response.send_message(f"✅ {sel_p.values[0]} の価格を {val}円 にしました。", ephemeral=True)
-                v3.add_item(discord.ui.Button(label="単価設定")).callback = lambda x: x.response.send_modal(GenericModal("単価", "金額", set_prc))
-                
-                sel_m = discord.ui.Select(placeholder="素材を選択してレシピ追加")
-                for m in mats: sel_m.add_option(label=m, value=m)
-                async def r_cb(i3, qty):
-                    async with aiosqlite.connect(DB_PATH) as db: await db.execute("INSERT OR REPLACE INTO recipes VALUES (?,?,?)", (sel_p.values[0], sel_m.values[0], int(qty))); await db.commit()
-                    await i3.response.send_message(f"✅ {sel_p.values[0]} に {sel_m.values[0]} x{qty} を設定", ephemeral=True)
-                sel_m.callback = lambda i4: i4.response.send_modal(GenericModal("個数", "必要数", r_cb))
-                v3.add_item(sel_m)
-                await i2.response.send_message(f"【{sel_p.values[0]}】の設定:", view=v3, ephemeral=True)
-            sel_p.callback = p_cb; view.add_item(sel_p)
+        if prods:
+            sel_p = discord.ui.Select(placeholder="個別操作（削除・レシピ・単価）", row=1)
+            for p_name in prods: sel_p.add_option(label=f"商品: {p_name}", value=p_name)
             
-        await i.response.send_message("登録・レシピ:", view=view, ephemeral=True)
+            async def p_manage_cb(i2):
+                target_p = sel_p.values[0]; v_sub = discord.ui.View()
+                async def del_p(i3):
+                    async with aiosqlite.connect(DB_PATH) as db:
+                        await db.execute("DELETE FROM products WHERE name=?", (target_p,))
+                        await db.execute("DELETE FROM recipes WHERE product_name=?", (target_p,)); await db.commit()
+                    await i3.response.send_message(f"🗑️ {target_p} を削除しました。", ephemeral=True)
+                async def set_prc(i3, val):
+                    async with aiosqlite.connect(DB_PATH) as db: await db.execute("UPDATE products SET price=? WHERE name=?", (int(val), target_p)); await db.commit()
+                    await i3.response.send_message(f"💰 {target_p} の単価を {val}円 に設定", ephemeral=True)
 
-    @discord.ui.button(label="在庫・補充/引出", style=discord.ButtonStyle.secondary, custom_id="v1_it_stock")
+                v_sub.add_item(discord.ui.Button(label="❌ 削除", style=discord.ButtonStyle.danger)).callback = del_p
+                v_sub.add_item(discord.ui.Button(label="💰 単価設定", style=discord.ButtonStyle.primary)).callback = lambda x: x.response.send_modal(GenericModal("単価", "数値", set_prc))
+                
+                # レシピ登録機能（個別操作内）
+                if mats:
+                    sel_m = discord.ui.Select(placeholder="この商品のレシピに素材を登録")
+                    for m_name in mats: sel_m.add_option(label=f"素材: {m_name}", value=m_name)
+                    async def r_cb(i4, qty):
+                        async with aiosqlite.connect(DB_PATH) as db: await db.execute("INSERT OR REPLACE INTO recipes VALUES (?,?,?)", (target_p, sel_m.values[0], int(qty))); await db.commit()
+                        await i4.response.send_message(f"✅ {target_p} のレシピ: {sel_m.values[0]} x{qty}", ephemeral=True)
+                    sel_m.callback = lambda i5: i5.response.send_modal(GenericModal("必要数", "制作1個あたりの必要数", r_cb))
+                    v_sub.add_item(sel_m)
+                await i2.response.send_message(f"【{target_p}】設定:", view=v_sub, ephemeral=True)
+            sel_p.callback = p_manage_cb; view.add_item(sel_p)
+        await i.response.send_message("マスタ管理:", view=view, ephemeral=True)
+
+    @discord.ui.button(label="在庫表示・在庫調整", style=discord.ButtonStyle.secondary, custom_id="v16_it_stock")
     async def stock(self, i, b):
         async with aiosqlite.connect(DB_PATH) as db:
             m = await (await db.execute("SELECT name, current FROM materials")).fetchall()
             p = await (await db.execute("SELECT name, current FROM products")).fetchall()
         
-        txt = "📦 **現在在庫**\n【素材】\n" + "\n".join([f"・{x[0]}: {x[1]}個" for x in m]) + "\n\n【商品】\n" + "\n".join([f"・{x[0]}: {x[1]}個" for x in p])
+        # 商品在庫と素材在庫の両方を表示
+        txt = "📦 **現在庫一覧**\n\n**【商品在庫】**\n" + ("\n".join([f"・{x[0]}: `{x[1]}`個" for x in p]) if p else "なし")
+        txt += "\n\n**【素材在庫】**\n" + ("\n".join([f"・{x[0]}: `{x[1]}`個" for x in m]) if m else "なし")
+        
         view = discord.ui.View()
-        if m:
-            sel = discord.ui.Select(placeholder="補充/引出する素材を選択")
-            for x in m: sel.add_option(label=x[0], value=x[0])
+        all_items = [(x[0], "m") for x in m] + [(x[0], "p") for x in p]
+        if all_items:
+            sel = discord.ui.Select(placeholder="在庫（商品・素材）を手動調整")
+            for name, itype in all_items[:25]:
+                sel.add_option(label=f"{'素材' if itype=='m' else '商品'}: {name}", value=f"{itype}:{name}")
             async def adj(i2, v):
-                async with aiosqlite.connect(DB_PATH) as db: await db.execute("UPDATE materials SET current = current + ? WHERE name=?", (int(v), sel.values[0])); await db.commit()
-                await i2.response.send_message(f"✅ {sel.values[0]} を {v} 調整しました。", ephemeral=True)
-            sel.callback = lambda i2: i2.response.send_modal(GenericModal("調整", "数 (+で補充, -で引出)", adj))
+                itype, iname = sel.values[0].split(":")
+                table = "materials" if itype == "m" else "products"
+                async with aiosqlite.connect(DB_PATH) as db: await db.execute(f"UPDATE {table} SET current = current + ? WHERE name=?", (int(v), iname)); await db.commit()
+                await i2.response.send_message(f"✅ {iname} を {v} 調整しました。", ephemeral=True)
+            sel.callback = lambda i2: i2.response.send_modal(GenericModal("数値入力", "+で補充 / -で減少", adj))
             view.add_item(sel)
         await i.response.send_message(txt, view=view, ephemeral=True)
-
-# ================= 5. 管理パネル (AdminPanel) =================
+        
+# ================= 5. 管理パネル (AdminPanel) 修正版 =================
 class AdminPanel(discord.ui.View):
     def __init__(self): super().__init__(timeout=None)
     
     async def interaction_check(self, i: discord.Interaction):
         if i.channel_id != ADMIN_PANEL_CH: return False
         if any(r.id == ADMIN_ROLE_ID for r in i.user.roles): return True
-        await i.response.send_message("❌ 管理ロールが必要です。", ephemeral=True); return False
+        await i.response.send_message("❌ 管理者権限が必要です。", ephemeral=True); return False
 
-    @discord.ui.button(label="メンバー管理", style=discord.ButtonStyle.success, custom_id="v1_ad_mem")
+    @discord.ui.button(label="メンバー管理", style=discord.ButtonStyle.success, custom_id="v16_ad_mem")
     async def members(self, i, b):
-        view = discord.ui.View(); sel = discord.ui.Select(placeholder="付与するロールを選択")
+        view = discord.ui.View(); sel = discord.ui.Select(placeholder="付与するロール")
         for n, rid in ROLE_OPTIONS.items(): sel.add_option(label=n, value=str(rid))
         async def m_cb(i2):
             async def act(i3, uid):
                 target = i3.guild.get_member(int(uid)); role = i3.guild.get_role(int(sel.values[0]))
-                await target.add_roles(role); await i3.response.send_message(f"✅ {target.display_name} に付与完了", ephemeral=True)
-            await i2.response.send_modal(GenericModal("ID入力", "ユーザーID", act))
-        sel.callback = m_cb; view.add_item(sel); await i.response.send_message("ロール管理:", view=view, ephemeral=True)
+                if target and role: await target.add_roles(role); await i3.response.send_message(f"✅ {target.display_name} へ付与完了", ephemeral=True)
+                else: await i3.response.send_message("❌ ID不正または未所属", ephemeral=True)
+            await i2.response.send_modal(GenericModal("ID", "ユーザーID", act))
+        sel.callback = m_cb; view.add_item(sel); await i.response.send_message("メンバー管理:", view=view, ephemeral=True)
 
-    @discord.ui.button(label="ランキング/勤怠集計", style=discord.ButtonStyle.gray, custom_id="v1_ad_stat")
+    @discord.ui.button(label="集計/リセット", style=discord.ButtonStyle.gray, custom_id="v16_ad_stat")
     async def stats(self, i, b):
         async with aiosqlite.connect(DB_PATH) as db:
             rank = await (await db.execute("SELECT user_id, total_amount FROM sales_ranking ORDER BY total_amount DESC")).fetchall()
             work = await (await db.execute("SELECT user_id, SUM(duration) FROM work_logs GROUP BY user_id")).fetchall()
         
-        msg = "🏆 **売上ランキング**\n" + "\n".join([f"<@{r[0]}>: {r[1]:,}円" for r in rank])
-        msg += f"\n\n📊 **勤怠集計**\n" + "\n".join([f"<@{w[0]}>: {w[1]//60}時間{w[1]%60}分" for w in work])
+        msg = "🏆 **売上ランキング**\n" + ("\n".join([f"<@{r[0]}>: {r[1]:,}円" for r in rank]) if rank else "データなし")
+        msg += f"\n\n📊 **勤怠累計**\n" + ("\n".join([f"<@{w[0]}>: {w[1]//60}時間{w[1]%60}分" for w in work]) if work else "データなし")
         
         view = discord.ui.View()
+        # 全体リセットの修正
         async def reset_all(idx):
-            async with aiosqlite.connect(DB_PATH) as db: await db.execute("DELETE FROM sales_ranking; DELETE FROM work_logs;"); await db.commit()
-            await idx.response.send_message("✅ 全データをリセットしました。", ephemeral=True)
+            async with aiosqlite.connect(DB_PATH) as db:
+                await db.execute("DELETE FROM sales_ranking")
+                await db.execute("DELETE FROM work_logs")
+                await db.commit() # 確実に反映
+            await idx.response.send_message("✅ 全統計データをリセットしました。", ephemeral=True)
+        
+        # 個人リセットの修正
         async def reset_ind(idx, uid):
-            async with aiosqlite.connect(DB_PATH) as db: await db.execute("DELETE FROM sales_ranking WHERE user_id=?; DELETE FROM work_logs WHERE user_id=?", (int(uid), int(uid))); await db.commit()
-            await idx.response.send_message(f"✅ <@{uid}> のデータをリセットしました。", ephemeral=True)
+            async with aiosqlite.connect(DB_PATH) as db:
+                await db.execute("DELETE FROM sales_ranking WHERE user_id=?", (int(uid),))
+                await db.execute("DELETE FROM work_logs WHERE user_id=?", (int(uid),))
+                await db.commit() # 確実に反映
+            await idx.response.send_message(f"✅ <@{uid}> の個人統計をリセットしました。", ephemeral=True)
 
         view.add_item(discord.ui.Button(label="全体リセット", style=discord.ButtonStyle.danger)).callback = reset_all
-        view.add_item(discord.ui.Button(label="個人リセット", style=discord.ButtonStyle.secondary)).callback = lambda x: x.response.send_modal(GenericModal("リセット", "ユーザーID", reset_ind))
+        view.add_item(discord.ui.Button(label="個人IDリセット", style=discord.ButtonStyle.secondary)).callback = lambda x: x.response.send_modal(GenericModal("リセット", "対象ユーザーID", reset_ind))
         await i.response.send_message(msg, view=view, ephemeral=True)
 
-    @discord.ui.button(label="履歴ログ", style=discord.ButtonStyle.gray, custom_id="v1_ad_log")
+    @discord.ui.button(label="全体ログ", style=discord.ButtonStyle.gray, custom_id="v16_ad_log")
     async def logs(self, i, b):
         async with aiosqlite.connect(DB_PATH) as db:
             rows = await (await db.execute("SELECT created_at, user_id, action, detail FROM audit_logs ORDER BY id DESC LIMIT 15")).fetchall()
-        txt = "📜 **直近ログ**\n" + "\n".join([f"`{r[0][5:16]}` <@{r[1]}> **{r[2]}**: {r[3]}" for r in rows])
+        txt = "📜 **履歴**\n" + ("\n".join([f"`{r[0][5:16]}` <@{r[1]}> **{r[2]}**: {r[3]}" for r in rows]) if rows else "なし")
         await i.response.send_message(txt, ephemeral=True)
 
 # ================= 6. 業務パネル (GeneralPanel) =================
